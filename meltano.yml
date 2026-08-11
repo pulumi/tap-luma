@@ -1,0 +1,40 @@
+version: 1
+send_anonymous_usage_stats: false
+default_environment: dev
+project_id: tap-luma
+environments:
+- name: dev
+plugins:
+  extractors:
+  - name: tap-luma
+    namespace: tap_luma
+    # Local dev: install this working tree. Point at the git tag in dwh-workflows.
+    pip_url: -e .
+    capabilities:
+    - state
+    - catalog
+    - discover
+    - about
+    - stream-maps
+    settings_group_validation:
+    - [api_key]
+    settings:
+    - name: api_key
+      sensitive: true
+    - name: api_url
+    - name: scope
+    - name: start_date
+      kind: date_iso8601
+    - name: page_size
+      kind: integer
+    config:
+      api_url: https://public-api.luma.com
+      scope: calendar
+    metadata:
+      '*':
+        table-key-properties: []
+        key-properties: []
+  loaders:
+  - name: target-jsonl
+    variant: andyh1203
+    pip_url: target-jsonl

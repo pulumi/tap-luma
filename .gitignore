@@ -1,0 +1,29 @@
+# Secrets & local config
+.env
+config.json
+.secrets/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+
+# Meltano / tap output
+.meltano/
+output/
+*.singer
+
+# Editor / OS
+.DS_Store
+**/.claude/settings.local.json
