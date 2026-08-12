@@ -1,14 +1,14 @@
 """Stream type classes for tap-luma.
 
-Field names mirror the Luma public API. Luma has no ``updated_since`` filter on
-its list endpoints, so streams replicate in full and are deduplicated downstream
-(matching the house convention of ``key-properties: []`` at the Meltano layer).
+Field names mirror the Luma public API (verified against live responses). Luma has
+no ``updated_since`` filter on its list endpoints, so streams replicate in full and
+are deduplicated downstream (matching the house convention of ``key-properties: []``
+at the Meltano layer).
 
-Schemas are intentionally minimal: the SDK passes undeclared fields straight
-through to the target, so every real field still lands and can be modelled in the
-data vault. The nested ``event`` object is passed through untyped. Enrich the
-schemas (or set a natural sort/replication key) once the live response shapes are
-confirmed against https://public-api.luma.com/openapi.json.
+Each list endpoint returns a flat ``entries[]`` array; the entity key is ``id``
+(``evt-...`` events, ``gst-...`` guests, ``evtticktyp-...`` ticket types). Nested
+objects/arrays (geo, coordinate, event_tickets, registration_*) are passed through
+untyped so nothing is lost. See https://public-api.luma.com/openapi.json.
 """
 
 from __future__ import annotations
@@ -23,40 +23,39 @@ from tap_luma.client import LumaStream
 if t.TYPE_CHECKING:
     from singer_sdk.helpers.types import Context
 
-# The events list wraps the full event object, whose shape is rich and varies by
-# event type; pass it through untyped rather than enumerating every field.
+# Nested blobs (geo/coordinate/tickets/answers) vary per event; pass them through.
 _PASSTHROUGH_OBJECT = th.ObjectType(additional_properties=True)
 
 
 class EventsStream(LumaStream):
     """Calendar (or organization) events -- the parent of guests & ticket types.
 
-    Each entry wraps the event under ``event`` (name, ``start_at``, ``end_at``,
-    geo/url, visibility, host counts, ...). ``api_id`` (evt-...) is the event key
-    used to fetch child records.
+    Entries are flat event objects keyed by ``id`` (evt-...): name, start/end,
+    location, geo, cover, host user, registration questions, etc.
     """
 
     name = "events"
-    primary_keys = ("api_id",)
+    primary_keys = ("id",)
     replication_key = None
 
     schema = th.PropertiesList(
-        th.Property(
-            "api_id",
-            th.StringType,
-            required=True,
-            description="Event id (evt-...).",
-        ),
-        th.Property(
-            "event",
-            _PASSTHROUGH_OBJECT,
-            description="Full event object (name, start_at, end_at, geo, url, ...).",
-        ),
-        th.Property(
-            "tags",
-            th.ArrayType(_PASSTHROUGH_OBJECT),
-            description="Event tags, when present.",
-        ),
+        th.Property("id", th.StringType, required=True, description="Event id (evt-...)."),
+        th.Property("calendar_id", th.StringType(nullable=True)),
+        th.Property("user_id", th.StringType(nullable=True), description="Host/creator user id."),
+        th.Property("name", th.StringType(nullable=True)),
+        th.Property("start_at", th.DateTimeType(nullable=True)),
+        th.Property("end_at", th.DateTimeType(nullable=True)),
+        th.Property("created_at", th.DateTimeType(nullable=True)),
+        th.Property("duration_interval", th.StringType(nullable=True), description="ISO 8601 duration."),
+        th.Property("timezone", th.StringType(nullable=True)),
+        th.Property("location_type", th.StringType(nullable=True), description="offline / online / ..."),
+        th.Property("location_visibility", th.StringType(nullable=True)),
+        th.Property("meeting_url", th.StringType(nullable=True)),
+        th.Property("cover_url", th.StringType(nullable=True)),
+        th.Property("url", th.StringType(nullable=True)),
+        th.Property("geo_address_json", _PASSTHROUGH_OBJECT, description="Address detail object."),
+        th.Property("coordinate", _PASSTHROUGH_OBJECT, description="{longitude, latitude}."),
+        th.Property("registration_questions", th.ArrayType(_PASSTHROUGH_OBJECT)),
     ).to_dict()
 
     @property
@@ -100,40 +99,51 @@ class EventsStream(LumaStream):
         Returns:
             A context dict carrying the event id for child streams.
         """
-        event_id = record.get("api_id") or (record.get("event") or {}).get("api_id")
-        return {"event_id": event_id}
+        return {"event_id": record["id"]}
 
 
 class EventGuestsStream(LumaStream):
     """Guests (registrants / attendees) for each event -- the core attendance data.
 
-    Includes ``approval_status`` (approved / pending_approval / declined / waitlist),
-    registration and check-in timestamps, and the person's name/email.
+    Keyed by ``id`` (gst-...). Includes ``approval_status`` (approved /
+    pending_approval / declined / waitlist), registration/invite/join timestamps,
+    the person (``user_email`` / ``user_name``), and their ``event_tickets``.
     """
 
     name = "event_guests"
     parent_stream_type = EventsStream
     ignore_parent_replication_key = True
     path = "/v1/events/guests/list"
-    primary_keys = ("api_id",)
+    primary_keys = ("id",)
     replication_key = None
 
     schema = th.PropertiesList(
-        th.Property("api_id", th.StringType, description="Guest id."),
+        th.Property("id", th.StringType, description="Guest id (gst-...)."),
         th.Property(
             "event_id",
             th.StringType,
             description="Parent event id (FK, added by the tap).",
         ),
-        th.Property("name", th.StringType),
-        th.Property("email", th.StringType),
+        th.Property("user_id", th.StringType(nullable=True)),
+        th.Property("user_email", th.StringType(nullable=True)),
+        th.Property("user_name", th.StringType(nullable=True)),
+        th.Property("user_first_name", th.StringType(nullable=True)),
+        th.Property("user_last_name", th.StringType(nullable=True)),
         th.Property(
             "approval_status",
             th.StringType,
             description="approved / pending_approval / declined / waitlist.",
         ),
         th.Property("registered_at", th.DateTimeType(nullable=True)),
-        th.Property("checked_in_at", th.DateTimeType(nullable=True)),
+        th.Property("invited_at", th.DateTimeType(nullable=True)),
+        th.Property("joined_at", th.DateTimeType(nullable=True)),
+        th.Property("phone_number", th.StringType(nullable=True)),
+        th.Property("registration_answers", th.ArrayType(_PASSTHROUGH_OBJECT)),
+        th.Property(
+            "event_tickets",
+            th.ArrayType(_PASSTHROUGH_OBJECT),
+            description="Per-guest tickets incl. amount, currency, checked_in_at.",
+        ),
     ).to_dict()
 
     def get_url_params(
@@ -179,17 +189,24 @@ class EventTicketTypesStream(LumaStream):
     parent_stream_type = EventsStream
     ignore_parent_replication_key = True
     path = "/v1/events/ticket-types/list"
-    primary_keys = ("api_id",)
+    primary_keys = ("id",)
     replication_key = None
 
     schema = th.PropertiesList(
-        th.Property("api_id", th.StringType, description="Ticket type id."),
+        th.Property("id", th.StringType, description="Ticket type id (evtticktyp-...)."),
         th.Property(
             "event_id",
             th.StringType,
             description="Parent event id (FK, added by the tap).",
         ),
-        th.Property("name", th.StringType),
+        th.Property("name", th.StringType(nullable=True)),
+        th.Property("type", th.StringType(nullable=True), description="free / paid / donation."),
+        th.Property("cents", th.IntegerType(nullable=True)),
+        th.Property("min_cents", th.IntegerType(nullable=True)),
+        th.Property("currency", th.StringType(nullable=True)),
+        th.Property("require_approval", th.BooleanType(nullable=True)),
+        th.Property("is_hidden", th.BooleanType(nullable=True)),
+        th.Property("max_capacity", th.IntegerType(nullable=True)),
     ).to_dict()
 
     def get_new_paginator(self) -> BaseAPIPaginator:
@@ -239,11 +256,12 @@ class PeopleStream(LumaStream):
 
     name = "people"
     path = "/v1/calendars/contacts/list"
-    primary_keys = ("api_id",)
+    primary_keys = ("id",)
     replication_key = None
 
     schema = th.PropertiesList(
-        th.Property("api_id", th.StringType, description="Contact id."),
-        th.Property("name", th.StringType),
-        th.Property("email", th.StringType),
+        th.Property("id", th.StringType, description="Contact id."),
+        th.Property("user_id", th.StringType(nullable=True)),
+        th.Property("email", th.StringType(nullable=True)),
+        th.Property("name", th.StringType(nullable=True)),
     ).to_dict()
