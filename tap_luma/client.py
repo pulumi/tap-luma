@@ -10,8 +10,10 @@ https://public-api.luma.com/openapi.json for the full spec.
 from __future__ import annotations
 
 import decimal
+import time
 import typing as t
 
+import backoff
 from singer_sdk.authenticators import APIKeyAuthenticator
 from singer_sdk.helpers.jsonpath import extract_jsonpath
 from singer_sdk.pagination import BaseAPIPaginator
@@ -23,6 +25,16 @@ if t.TYPE_CHECKING:
 
 DEFAULT_API_URL = "https://public-api.luma.com"
 DEFAULT_PAGE_SIZE = 50
+# Luma rate-limits per API key across ALL streams of a run. Unthrottled, the
+# tap paginates at ~9 requests/s and a full sync (events + per-event guests +
+# people) exhausts the budget mid-run. Spacing requests keeps the sustained
+# rate safely under the limit.
+REQUEST_INTERVAL_SECONDS = 0.3
+# A 429 keeps rejecting instantly until the key's window cools down, so
+# second-scale exponential waits burn every retry inside the same window.
+# Waiting in window-sized steps outlasts it instead.
+RATE_LIMIT_WAIT_SECONDS = 65
+RATE_LIMIT_MAX_TRIES = 7
 
 
 class LumaPaginator(BaseAPIPaginator):
@@ -95,6 +107,40 @@ class LumaStream(RESTStream):
             A :class:`LumaPaginator` instance.
         """
         return LumaPaginator()
+
+    def backoff_wait_generator(self) -> t.Generator[float, None, None]:
+        """Wait in rate-limit-window steps between retries.
+
+        Returns:
+            A generator yielding a constant window-sized wait.
+        """
+        return backoff.constant(interval=RATE_LIMIT_WAIT_SECONDS)
+
+    def backoff_max_tries(self) -> int:
+        """Allow enough retries to ride out a rate-limit window.
+
+        Returns:
+            The maximum number of request attempts.
+        """
+        return RATE_LIMIT_MAX_TRIES
+
+    def _request(
+        self,
+        prepared_request: requests.PreparedRequest,
+        context: Context | None,
+    ) -> requests.Response:
+        """Issue the request, then pause to stay under the shared rate limit.
+
+        Args:
+            prepared_request: The prepared HTTP request.
+            context: The stream context.
+
+        Returns:
+            The HTTP response.
+        """
+        response = super()._request(prepared_request, context)
+        time.sleep(REQUEST_INTERVAL_SECONDS)
+        return response
 
     def get_url_params(
         self,
