@@ -39,22 +39,40 @@ class EventsStream(LumaStream):
     replication_key = None
 
     schema = th.PropertiesList(
-        th.Property("id", th.StringType, required=True, description="Event id (evt-...)."),
+        th.Property(
+            "id", th.StringType, required=True, description="Event id (evt-...)."
+        ),
         th.Property("calendar_id", th.StringType(nullable=True)),
-        th.Property("user_id", th.StringType(nullable=True), description="Host/creator user id."),
+        th.Property(
+            "user_id", th.StringType(nullable=True), description="Host/creator user id."
+        ),
         th.Property("name", th.StringType(nullable=True)),
         th.Property("start_at", th.DateTimeType(nullable=True)),
         th.Property("end_at", th.DateTimeType(nullable=True)),
         th.Property("created_at", th.DateTimeType(nullable=True)),
-        th.Property("duration_interval", th.StringType(nullable=True), description="ISO 8601 duration."),
+        th.Property(
+            "duration_interval",
+            th.StringType(nullable=True),
+            description="ISO 8601 duration.",
+        ),
         th.Property("timezone", th.StringType(nullable=True)),
-        th.Property("location_type", th.StringType(nullable=True), description="offline / online / ..."),
+        th.Property(
+            "location_type",
+            th.StringType(nullable=True),
+            description="offline / online / ...",
+        ),
         th.Property("location_visibility", th.StringType(nullable=True)),
         th.Property("meeting_url", th.StringType(nullable=True)),
         th.Property("cover_url", th.StringType(nullable=True)),
         th.Property("url", th.StringType(nullable=True)),
-        th.Property("geo_address_json", _PASSTHROUGH_OBJECT, description="Address detail object."),
-        th.Property("coordinate", _PASSTHROUGH_OBJECT, description="{longitude, latitude}."),
+        th.Property(
+            "geo_address_json",
+            _PASSTHROUGH_OBJECT,
+            description="Address detail object.",
+        ),
+        th.Property(
+            "coordinate", _PASSTHROUGH_OBJECT, description="{longitude, latitude}."
+        ),
         th.Property("registration_questions", th.ArrayType(_PASSTHROUGH_OBJECT)),
     ).to_dict()
 
@@ -193,14 +211,18 @@ class EventTicketTypesStream(LumaStream):
     replication_key = None
 
     schema = th.PropertiesList(
-        th.Property("id", th.StringType, description="Ticket type id (evtticktyp-...)."),
+        th.Property(
+            "id", th.StringType, description="Ticket type id (evtticktyp-...)."
+        ),
         th.Property(
             "event_id",
             th.StringType,
             description="Parent event id (FK, added by the tap).",
         ),
         th.Property("name", th.StringType(nullable=True)),
-        th.Property("type", th.StringType(nullable=True), description="free / paid / donation."),
+        th.Property(
+            "type", th.StringType(nullable=True), description="free / paid / donation."
+        ),
         th.Property("cents", th.IntegerType(nullable=True)),
         th.Property("min_cents", th.IntegerType(nullable=True)),
         th.Property("currency", th.StringType(nullable=True)),
